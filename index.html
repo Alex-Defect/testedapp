@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="utf-8" />
+    <title>TG Mini App Worker Demo</title>
+
+    <!-- Telegram WebApp API -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+
+  <body>
+    <h1>Worker Demo</h1>
+
+    <p>
+      <label>
+        API URL
+        <input id="api" />
+      </label>
+    </p>
+
+    <p>
+      <button id="all">Все запросы</button>
+      <button id="tg">Telegram init</button>
+      <button id="clear">Очистить</button>
+    </p>
+
+    <pre id="out"></pre>
+
+    <script>
+      const apiInput = document.getElementById("api");
+      const out = document.getElementById("out");
+
+      // Если открываешь страницу через file://, origin будет "null".
+      // Тогда нужно вручную вписать URL твоего Worker.
+      apiInput.value =
+        location.origin && location.origin !== "null"
+          ? location.origin
+          : "https://YOUR-WORKER.workers.dev";
+
+      function line(text) {
+        out.textContent += text + "\n";
+      }
+
+      function clearOutput() {
+        out.textContent = "";
+      }
+
+      async function call(method, path, body, contentType) {
+        const baseUrl = apiInput.value.replace(/\/$/, "");
+        const url = baseUrl + path;
+
+        const options = {
+          method,
+          headers: {},
+        };
+
+        if (body !== undefined) {
+          if (contentType === "form") {
+            options.headers["Content-Type"] =
+              "application/x-www-form-urlencoded";
+            options.body = new URLSearchParams(body).toString();
+          } else {
+            options.headers["Content-Type"] = "application/json";
+            options.body = JSON.stringify(body);
+          }
+        }
+
+        line(`-> ${method} ${path}`);
+
+        try {
+          const response = await fetch(url, options);
+          const text = await response.text();
+
+          let pretty = text;
+          try {
+            pretty = JSON.stringify(JSON.parse(text), null, 2);
+          } catch {
+            // Если ответ не JSON, оставляем как есть.
+          }
+
+          line(`<- ${response.status} ${response.statusText}`);
+          line(pretty);
+          line("");
+
+          return {
+            status: response.status,
+            body: text,
+          };
+        } catch (error) {
+          line(`!! Error: ${String(error)}`);
+          line("");
+
+          return {
+            status: 0,
+            body: String(error),
+          };
+        }
+      }
+
+      document.getElementById("clear").onclick = clearOutput;
+
+      document.getElementById("all").onclick = async () => {
+        clearOutput();
+
+        // 1. Health check
+        await call("GET", "/api/health");
+
+        // 2. Query parameters
+        await call(
+          "GET",
+          "/api/search?q=hello&tag=js&tag=telegram&page=1&limit=3"
+        );
+
+        // 3. List users
+        await call("GET", "/api/users?page=1&limit=10");
+
+        // 4. Path parameter: GET /api/users/42
+        await call("GET", "/api/users/42");
+
+        // 5. JSON POST
+        await call("POST", "/api/echo", {
+          message: "hi",
+          numbers: [1, 2, 3],
+          nested: {
+            ok: true,
+          },
+        });
+
+        // 6. Form POST
+        await call(
+          "POST",
+          "/api/form",
+          {
+            login: "demo_user",
+            password: "demo_password",
+            note: "this is form data",
+          },
+          "form"
+        );
+
+        // 7. PUT with JSON body
+        await call("PUT", "/api/users/42", {
+          name: "Updated name",
+        });
+
+        // 8. DELETE
+        await call("DELETE", "/api/users/42");
+
+        // 9. Unknown route
+        await call("GET", "/api/not-found");
+      };
+
+      document.getElementById("tg").onclick = async () => {
+        clearOutput();
+
+        const tg = window.Telegram && window.Telegram.WebApp;
+
+        if (!tg) {
+          line(
+            "Telegram WebApp API недоступен. Открой эту страницу внутри Telegram Mini App."
+          );
+          return;
+        }
+
+        tg.ready();
+
+        if (typeof tg.expand === "function") {
+          tg.expand();
+        }
+
+        const initData = tg.initData;
+
+        if (!initData) {
+          line(
+            "initData пустая. Убедись, что приложение открыто через бота, а не просто в браузере."
+          );
+          return;
+        }
+
+        line(`initData length: ${initData.length}`);
+
+        await call("POST", "/api/telegram/init", {
+          initData,
+        });
+      };
+    </script>
+  </body>
+</html>
